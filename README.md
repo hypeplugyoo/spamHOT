@@ -19,8 +19,11 @@ Requer Docker Compose e Node.js 22 ou superior.
 
 ```bash
 cp .env.example .env
-# Troque APP_ENCRYPTION_KEY e SESSION_ENCRYPTION_KEY por chaves aleatórias de 32 bytes em Base64.
-openssl rand -base64 32
+```
+
+Edite `.env` e escolha valores locais para `POSTGRES_PASSWORD`, `MINIO_ROOT_USER` e `MINIO_ROOT_PASSWORD`. Gere também as duas chaves de criptografia em separado com `openssl rand -base64 32` e substitua os marcadores. Não publique o arquivo `.env`.
+
+```bash
 docker compose up --build
 ```
 
