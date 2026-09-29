@@ -1,78 +1,83 @@
-# Pulso Social — scaffold de publicação
+# Pulso Social — base segura para gestão de conteúdo
 
-Painel Next.js em português, modelo PostgreSQL, filas BullMQ separadas, worker isolado e uma interface demonstrativa para organizar publicações. **Esta entrega é um scaffold e uma demonstração visual, não um SaaS operacional ligado ao Instagram.** O adaptador real, autenticação do SaaS, upload S3, controle de organização em todas as rotas e intervenção humana ainda precisam ser implementados e validados antes de qualquer uso real.
+Aplicação Next.js em português, com PostgreSQL, Redis/BullMQ, worker separado, serviço privado de sessão e MinIO compatível com S3. Esta versão entrega autenticação do SaaS, isolamento básico por organização, cadastro de perfis sem credenciais do Instagram e upload privado de mídia. O dashboard e os resultados ainda incluem dados de demonstração. **Não é um serviço operacional de publicação ou coleta de métricas do Instagram.**
 
-## O que está funcionando nesta entrega
+## Situação atual
 
-- Painel responsivo com dashboard, contas de exemplo, biblioteca, agendamentos, histórico, central de verificações e configurações.
-- Fluxo visual de composição de imagem, carrossel ou Reel, legenda, seleção de contas e agendamento. A confirmação é explicitamente demonstrativa e não envia dados.
-- Dashboard usa conteúdo estático identificado como demonstração. Métricas de visualização não são métricas do Instagram.
-- Schema PostgreSQL inicial para organização, associação de usuários, contas, grupos, mídias, lotes, publicações por conta, tentativas, intervenções, snapshots e auditoria.
-- Filas BullMQ separadas para publicação e métricas, chave interna estável, cancelamento de tarefas pendentes e lease Redis por conta com renovação.
-- Utilitário AES-256-GCM para criptografar segredos. A aplicação ainda não persiste credenciais ou sessões.
-- Regras testadas para contagem exclusiva de publicações, métricas parciais, correções de contador, isolamento por organização, lease, idempotência e decisão de recuperação.
-- Serviço de sessão privado desligado, exposto apenas no loopback do host; o endpoint informa que intervenção real ainda não está habilitada.
+- Cadastro e login do SaaS com senhas Argon2id, sessão opaca em cookie HttpOnly e token armazenado como hash.
+- Criação de uma organização no cadastro. Consultas e operações de perfis, grupos e mídias são escopadas pela organização da sessão.
+- Limite de 500 perfis aplicado no servidor com bloqueio transacional por organização.
+- Cadastro de nome de usuário apenas. Nenhuma senha ou cookie do Instagram é solicitado ou armazenado; contas ficam desconectadas.
+- Upload autenticado para armazenamento S3 com URLs pré-assinadas de curta duração; conclusão valida tamanho e assinatura real do tipo de arquivo.
+- Auditoria para cadastro de perfil, grupo e mídia; endpoints iniciais para contas e grupos.
+- Filas de publicação e métricas, lease Redis por conta, adaptador Instagram desativado, schema de lotes, tentativas, métricas e intervenções.
+- Dashboard claramente marcado como demonstração. Os valores exibidos não vêm de contas reais.
 
-## Rodar localmente
+### O que está desligado
 
-Requer Docker Compose e Node.js 22 ou superior.
+Não existe fluxo de autenticação do Instagram, persistência de sessões do Instagram, navegação Playwright no site, publicação, reconciliação de resultados, intervenção em verificações nem leitura de métricas reais. A ação “Nova publicação”, filas e worker não enviam posts. A central de verificações e agendamentos não é operacional. A simulação de 500 tarefas não é teste de capacidade de navegador.
+
+O projeto não usa a API da Meta. A automação de acesso à interface do Instagram não foi habilitada: os Termos oficiais vedam acesso ou coleta automatizada sem permissão expressa. Só avance para um adaptador real após obter e documentar essa autorização; preserve a intervenção humana e não implemente bypass de CAPTCHA, controles de acesso ou restrições.
+
+## Requisitos e início local
+
+Requer Node.js 22+ e Docker Compose. Configure os segredos locais antes de iniciar:
 
 ```bash
 cp .env.example .env
 ```
 
-Edite `.env` e escolha valores locais para `POSTGRES_PASSWORD`, `MINIO_ROOT_USER` e `MINIO_ROOT_PASSWORD`. Gere também as duas chaves de criptografia em separado com `openssl rand -base64 32` e substitua os marcadores. Não publique o arquivo `.env`.
+Edite `.env` com valores locais exclusivos para `POSTGRES_PASSWORD`, `MINIO_ROOT_USER` e `MINIO_ROOT_PASSWORD`. Gere também chaves distintas para `APP_ENCRYPTION_KEY` e `SESSION_ENCRYPTION_KEY` com `openssl rand -base64 32`. O `.env` contém segredos e não deve ser commitado.
 
 ```bash
 docker compose up --build
 ```
 
-Abra `http://localhost:3000`. Para rodar os testes e a simulação:
+Abra `http://localhost:3000/register` para criar a primeira organização. Testes e verificações:
 
 ```bash
 npm ci
-npm test
 npm run typecheck
+npm test
+npm run build
 npm run simulate:500
 ```
 
-`simulate:500` apenas cria estruturas em memória e chaves idempotentes. Não inicia navegadores, não mede consumo do Chromium, não contata contas e não valida capacidade de publicar.
-
-O serviço PostgreSQL carrega `db/init.sql` na primeira inicialização do volume. Para reaplicar alterações estruturais em ambiente descartável, remova o volume local `postgres_data` com `docker compose down -v` antes de subir novamente. Não use essa opção para volumes com dados que queira preservar.
+O Compose cria Postgres, Redis e MinIO, configura CORS de desenvolvimento e carrega `db/init.sql` na primeira inicialização do volume. Para uma instalação local descartável, `docker compose down -v` remove os volumes e **apaga os dados**.
 
 ## Serviços
 
-| Serviço | Responsabilidade | Estado desta entrega |
+| Serviço | Função | Estado |
 | --- | --- | --- |
-| `web` | Painel Next.js e API | Dashboard demonstrativo; sem autenticação ou operações persistentes |
-| `worker` | BullMQ e execução isolada | Filas e bloqueio Redis disponíveis; adaptador real desligado |
-| `session` | Sessão de navegador e intervenção | Shell de saúde apenas; não inicia sessão nem transmite navegador |
-| `postgres` | Persistência | Schema inicial implementado; aplicação não está conectada às tabelas |
-| `redis` | Filas e leases | Conexão configurada para workers |
-| `minio` | S3 local para mídias | Serviço disponível; bucket, upload e URLs assinadas ainda não integrados |
+| `web` | Next.js, telas e endpoints HTTP | Login, cadastro SaaS, contas, grupos e mídias iniciais; dashboard com demonstração |
+| `worker` | Consumidor BullMQ isolado | Adaptador externo desligado; não publica |
+| `session` | Canal privado de sessão/intervenção | Esqueleto de saúde; não abre navegador; porta mapeada apenas em `127.0.0.1` |
+| `postgres` | Persistência | Schema inicial e migração de sessão/mídia |
+| `redis` | Filas e leases | Configurado para filas e bloqueios |
+| `minio` | Armazenamento local compatível com S3 | Upload e download privado via URL temporária |
 
-## Decisões e limites
+As migrations estão em `db/migrations`. `db/init.sql` é o schema consolidado usado pelo Compose em banco novo; migrações incrementais para instalações existentes precisam ser aplicadas em ordem.
 
-- O modo padrão é `DEMO_MODE=true`. O painel, as contas, os resultados e os números são dados ilustrativos. Nunca devem ser interpretados como publicações ou leituras reais.
-- Definir `DEMO_MODE=false` **não habilita publicação**: seleciona um adaptador que lança erro explícito por não estar implementado. Não altere para produção esperando publicar.
-- Nenhuma API Meta é chamada. Não existe nesta entrega fluxo de login por usuário/senha, persistência de sessão, interface de desafio 2FA/CAPTCHA, upload S3, worker Playwright funcional, extração de métricas da interface, autenticação do produto nem autorização multi-organização de ponta a ponta.
-- A chave idempotente e o `jobId` evitam criar duas tarefas internas para a mesma combinação; não garantem execução única no Instagram.
-- Uma publicação cuja confirmação se perde depois do envio deve ser marcada como resultado incerto e reconciliada; não se deve reenviar sem confirmação.
-- A fila de métricas é separada e tem prioridade menor, mas a concorrência por organização e a coordenação real com estado persistente ainda não estão completas.
-- Frequência de métricas no `.env.example` é uma configuração futura. Os dados atuais não são coletados periodicamente.
-- Stories não fazem parte do escopo. Recursos e restrições da interface mudam; tipos, duração, proporções, resultados e métricas precisam ser observados e testados com poucas contas autorizadas antes de declarar suporte.
-- O schema contempla auditoria, mas ainda não há rota autenticada para registrar eventos. Capturas e credenciais não são coletadas.
+## Segurança e limites conhecidos
 
-## Próximos gates para uso real
+- Autenticação por e-mail e senha do SaaS; cookie `HttpOnly`, `SameSite=Strict`, sessão expira em 14 dias e pode ser revogada no logout.
+- Todas as operações de contas, grupos e mídias obtêm a organização da sessão no servidor; IDs de outras organizações não dão acesso aos objetos.
+- O proxy Next.js usa o cookie para encaminhar visitantes ao login, mas autorização efetiva fica nos endpoints.
+- URLs assinadas de upload expiram em 5 minutos; links de download expiram em 10 minutos. Tipos permitidos: JPEG, PNG, WebP e MP4. Imagens: até 20 MB; MP4: até 100 MB.
+- O limite de mídia e formatos ainda não valida dimensão, proporção ou duração dos vídeos.
+- Registro público não tem confirmação de e-mail, MFA ou limitação de tentativas/rate limit. Configure proteção de rede e identidade adicional antes de expor o serviço à internet.
+- CORS do MinIO aponta para `localhost:3000`; configure origens e armazenamento apropriados antes de um ambiente remoto.
+- Chaves de criptografia são placeholders no `.env.example`; não há credenciais ou sessões do Instagram armazenadas.
+- Idempotência interna evita tarefas duplicadas na aplicação quando o fluxo for conectado, mas não garante execução única na plataforma.
+- Métricas demo não são leituras observadas. Não há coleta periódica e números indisponíveis nunca devem ser apresentados como zero real.
 
-1. Implementar autenticação do SaaS, membership e verificação de organização em toda leitura, escrita, URL temporária e tarefa.
-2. Integrar armazenamento S3 com validação de mídia e links temporários.
-3. Implementar publicação e leitura de métricas no adaptador Playwright com seletores semânticos, sessão isolada por conta, sem bypass de CAPTCHA/bloqueios e com confirmação observável.
-4. Completar intervenção humana protegida, controles de acesso e expiração de sessões/capturas.
-5. Persistir transições e tentativas em Postgres; integrar filas às tabelas, cancelamento, pausa de lote, limites globais e por organização, retomada e estado incerto.
-6. Validar fluxo ponta a ponta com poucas contas autorizadas, revisar regras aplicáveis do Instagram e medir memória/CPU/duração com Chromium antes de aumentar concorrência.
-7. Depois disso, executar teste progressivo de capacidade; a simulação local de 500 tarefas não é teste de capacidade do navegador nem da plataforma.
+## Próximos passos para completar o produto
 
-## Dependências
+1. Adicionar convites e gestão de usuários por organização, controles de acesso por papel, rate limiting e recuperação segura de conta.
+2. Completar CRUD de grupos, remoção/reconexão de perfis e gestão da biblioteca.
+3. Integrar formulários de criação a tarefas persistentes, idempotência, cancelamento, pausa e limites de concorrência; manter publicação desligada até a autorização expressa.
+4. Após autorização, implementar o adaptador isolado com sessão separada por perfil, intervenção humana privada, confirmação observável e estado incerto sem reenvio cego.
+5. Validar na interface autorizada quais formatos e métricas estão disponíveis. Coletar snapshots com definição, origem, cobertura e horário; preservar correções negativas.
+6. Executar fluxo de ponta a ponta com poucas contas autorizadas e depois medir CPU, memória e duração antes de qualquer teste de expansão.
 
-Dependências JavaScript estão fixadas em `package.json` e lockfile. O projeto usa Next.js 16.3.7, React 19.2.4, BullMQ 5.58.5, Playwright 1.56.1 e PostgreSQL 17.6 para desenvolvimento. Imagens de contêiner estão declaradas no Compose.
+Stories não fazem parte do escopo inicial. Não declare o sistema operacional para publicar até que o fluxo real tenha passado pelos testes com poucas contas autorizadas.
